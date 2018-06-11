@@ -1,0 +1,65 @@
+{
+    "variables": {
+        "aws_access_key": "{{env `AWS_ACCESS_KEY_ID`}}",
+        "aws_secret_key": "{{env `AWS_SECRET_ACCESS_KEY`}}",
+        "region":         "{{env `AWS_REGION`}}"
+    },
+    "builders": [
+        {
+            "access_key": "{{user `aws_access_key`}}",
+            "ami_name": "packer-lnx-zab-agent-{{timestamp}}",
+            "instance_type": "t2.micro",
+            "region": "{{user `region`}}",
+            "secret_key": "{{user `aws_secret_key`}}",
+            "source_ami_filter": {
+              "filters": {
+              "virtualization-type": "hvm",
+              "name": "amzn2-ami-hvm-2017.12.0.20180328.1-x86_64-gp2",
+              "root-device-type": "ebs"
+              },
+              "owners": ["amazon"],
+              "most_recent": true
+            },
+            "ssh_username": "ec2-user",
+            "type": "amazon-ebs"
+        }
+    ],
+    "provisioners": [
+    {
+        "type": "shell",
+        "inline": [
+        	"sleep 30",
+        	"sudo yum update -y",
+        	"sleep 30",
+            "sudo yum install -y python",
+            "sleep 5",
+            "sudo curl -O https://bootstrap.pypa.io/get-pip.py",
+            "sleep 5",
+            "sudo python get-pip.py --user",
+            "sleep 5",
+            "sudo easy_install pip",
+            "sleep 5",
+            "sudo pip install ansible",
+            "sleep 20",
+            "sudo yum install -y git"
+        ]
+    },
+    {
+    	"type" : "file",
+    	"source" : "Ansible",
+    	"destination" : "/tmp/"
+    },
+    {
+        "type" : "shell",
+        "inline" : "cd /tmp"
+    },
+    {
+        "type": "ansible-local",
+        "role_paths": [
+            "Ansible/Playbooks/zabbix-agent/roles/zabbix-agent"
+        	],
+        "playbook_dir": "Ansible/Playbooks/zabbix-agent",
+        "playbook_file": "Ansible/Playbooks/zabbix-agent/deploy-zabbix-agent.yaml"
+        }
+    ]
+}

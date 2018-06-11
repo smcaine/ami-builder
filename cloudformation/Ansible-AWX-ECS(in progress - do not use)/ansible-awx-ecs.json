@@ -1,0 +1,535 @@
+{
+    "AWSTemplateFormatVersion": "2010-09-09",
+    "Description": "",
+    "Parameters": {
+    	"GitHubToken": {
+            "NoEcho": "true",
+            "Description": "Personal access token, needed for GitHub Enterprise and GitLab",
+            "Type": "String",
+            "Default": "",
+            "ConstraintDescription": "this token must be generated from the git server/provider"
+        },
+        "GitHubOwner": {
+            "Type" : "String",
+            "Default" : ""
+        },
+        "GitHubRepo" : {
+            "Type" : "String",
+            "Default" : ""
+        },
+        "GitHubBranch" : {
+            "Type" : "String",
+            "Default" : ""
+        },
+        "PathToBuildSpec" : {
+            "Type" : "String",
+            "Default" : ""
+        },
+        "BuildProject" : {
+            "Type" : "String",
+            "Default" : ""
+        },
+        "BucketName" : {
+            "Type" : "String",
+            "Default" : ""
+        },
+        "RepositoryName" : {
+        	"Type" : "String",
+        },
+        "ECSClusterName" : {
+        	"Type" : "String"
+        },
+        "VpcId" : {
+        	"Type" : "AWS::EC2::VPC::Id"
+        },
+        "SubnetA" : {
+        	"Type" : "AWS::EC2::Subnet::Id"
+        },
+        "SubnetB" : {
+        	"Type" : "AWS::EC2::Subnet::Id"
+        },
+        "KeyPair" : {
+        	"Type" : "AWS::EC2::KeyPair::KeyName"
+        }
+    },
+  	"Mappings":{
+	    "AWSRegionToAMI":{
+	      "us-east-1":{
+	        "AMIID":"ami-eca289fb"
+	      },
+	      "us-east-2":{
+	        "AMIID":"ami-446f3521"
+	      },
+	      "us-west-1":{
+	        "AMIID":"ami-9fadf8ff"
+	      },
+	      "us-west-2":{
+	        "AMIID":"ami-7abc111a"
+	      },
+	      "eu-west-1":{
+	        "AMIID":"ami-a1491ad2"
+	      },
+	      "eu-central-1":{
+	        "AMIID":"ami-54f5303b"
+	      },
+	      "ap-northeast-1":{
+	        "AMIID":"ami-9cd57ffd"
+	      },
+	      "ap-southeast-1":{
+	        "AMIID":"ami-a900a3ca"
+	      },
+	      "ap-southeast-2":{
+	        "AMIID":"ami-5781be34"
+	      }
+	    }
+  	},
+    "Resources" : {
+    	"ECRRepository" :{
+		"Type" : "AWS::ECR::Repository",
+  		"Properties" : {
+    		"RepositoryName" : "",
+    		}
+  		},
+  		"CodePipelineServiceRole" : {
+            "Type" : "AWS::IAM::Role",
+            "Properties" : {
+                "Path" : "/",
+                "AssumeRolePolicyDocument":{
+                    "Version" : "2012-10-17",
+                    "Statement": [ {
+                        "Effect": "Allow",
+                        "Principal": {
+                            "Service": [ "codepipeline.amazonaws.com" ]
+                            },
+                        "Action": [ "sts:AssumeRole" ]
+                    }]
+                },
+                "Policies": [{
+                    "PolicyName": {"Ref" : "BuildProject"},
+                    "PolicyDocument": {
+                          "Version": "2012-10-17",
+                          "Statement": [
+                                {
+                                "Effect": "Allow",
+                                "Action": "*",
+                                "Resource": { "Fn::Join" : [ "",[
+                                    "arn:aws:codebuild:",
+                                    {"Ref": "AWS::Region"},
+                                    ":",
+                                    {"Ref" : "AWS::AccountId"},
+                                    ":project/",
+                                    {"Ref" : "BuildProject"}
+                                    ]]}
+                                },
+                                {
+                                "Effect": "Allow",
+                                "Action": "*",
+                                "Resource": { "Fn::Join" : [ "",[
+                                    "arn:aws:s3:::",
+                                    {"Ref" : "BucketName"},
+                                    "/*"
+                                    ]]}
+                                }                             
+                            ]
+                    }
+               }]
+            }
+        },
+        "ArtifactsBucket" : {
+            "Type" : "AWS::S3::Bucket",
+            "Properties" : {
+                "BucketName" : {"Ref" : "BucketName"},
+                "Tags" : [],
+                "VersioningConfiguration" : {
+                    "Status" : "Enabled"
+                }
+            }
+        },
+        "CodePipeline" : {
+            "Type" : "AWS::CodePipeline::Pipeline",
+            "Properties" : {
+                "ArtifactStore" : {
+                    "Location" : {"Ref" : "ArtifactsBucket"},
+                    "Type" : "S3"
+                    },
+                "RoleArn": {"Fn::GetAtt" : ["CodePipelineServiceRole", "Arn"]},
+                "Name" : {"Ref" : "BuildProject"},
+                "Stages" : [
+                    {
+                        "Actions" : [{
+                            "ActionTypeId" : {
+                                "Category": "Source",
+                                "Owner": "ThirdParty",
+                                "Version": "1",
+                                "Provider": "GitHub"
+                                },
+                            "Configuration" : {
+                                "Owner" : {"Ref" : "GitHubOwner"},
+                                "Repo" : {"Ref" : "GitHubRepo"},
+                                "Branch" : {"Ref" : "GitHubBranch"},
+                                "OAuthToken" : {"Ref" : "GitHubToken"}
+                            },
+                            "InputArtifacts" : [],
+                            "Name" : "Source",
+                            "OutputArtifacts" : [{
+                                "Name" : {"Ref" : "AWS::StackName"}
+                            }],
+                            "RunOrder" : 1
+                            }
+                        ],
+                        "Name" : "Source"
+                    },
+                    {
+                        "Actions" : [{
+                            "ActionTypeId" : {
+                                "Category": "Build",
+                                "Owner": "AWS",
+                                "Version": "1",
+                                "Provider": "CodeBuild"
+                                },
+                            "Configuration" : {
+                                "ProjectName" : {"Ref" : "BuildProject"}
+                            },
+                            "InputArtifacts" : [{
+                                "Name" : {"Ref" : "AWS::StackName"}
+                                }],
+                            "Name" : "Build",
+                            "OutputArtifacts" : [],
+                            "RunOrder" : 1
+                            }
+                        ],
+                        "Name" : "Build"
+                    }
+                ]
+                }
+            },
+        "CodeBuildRole": {
+          "Type": "AWS::IAM::Role",
+          "Properties": {
+            "AssumeRolePolicyDocument": {
+              "Statement": [
+                {
+                  "Action": [
+                    "sts:AssumeRole"
+                  ],
+                  "Effect": "Allow",
+                  "Principal": {
+                    "Service": [
+                      "codebuild.amazonaws.com"
+                    ]
+                  }
+                }
+              ],
+              "Version": "2012-10-17"
+            },
+            "Path": "/",
+            "Policies": [
+              {
+                "PolicyName": "CodeBuildAccess",
+                "PolicyDocument": {
+                  "Version": "2012-10-17",
+                  "Statement": [
+                    {
+                      "Action": [
+                        "logs:*",
+                        "ec2:*"
+                      ],
+                      "Effect": "Allow",
+                      "Resource": "*"
+                    },
+                    {
+                        "Action" : [
+                            "*"
+                        ],
+                        "Effect" : "Allow",
+                        "Resource" : { "Fn::Join" : [ "",[
+                        "arn:aws:s3:::",
+                        {"Ref" : "BucketName"},
+                        "/*"
+                    ]]}
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        "CodeBuild" : {
+            "Type" : "AWS::CodeBuild::Project",
+            "Properties" : {
+                "Artifacts" : {
+                    "Name" : {"Ref" : "BuildProject"},
+                    "Type" : "CODEPIPELINE"
+                    },
+                "Description" : "This CodeBuild is used to run Packer to build and conifigure a TD base AMI",
+                "Environment" : {
+                    "ComputeType" : "BUILD_GENERAL1_SMALL",
+                    "Image" : "aws/codebuild/ubuntu-base:14.04",
+                    "PrivilegedMode" : false,
+                    "Type" : "LINUX_CONTAINER"
+                    },
+                "Name" : {"Ref" : "BuildProject"},
+                "ServiceRole" : { "Ref" :"CodeBuildRole" },
+                "Source" : {
+                    "BuildSpec" : {"Ref" : "PathToBuildSpec"} ,
+                    "Type" : "CODEPIPELINE"
+                    },
+                "Tags" : [
+                    {
+                    "Key" : "Name",
+                    "Value" : {"Ref" : "BuildProject"}
+                }]
+            }
+        },
+        "ECSCluster" :{
+        	"Type" : "AWS::ECS::Cluster",
+  			"Properties" : {
+    			"ClusterName" : {"Ref" : "ECSClusterName"}
+  			}
+        },
+        "ELBSecurityGroup" : {
+        	"Type" : "AWS::EC2::SecurityGroup",
+    		"Properties" : {
+			    "GroupName" : {"Ref" : "AWS::StackName"},
+			    "GroupDescription" : "This security group allows ingress traffic through the ECS Application Load Balancer",
+			    "SecurityGroupIngress" : [
+			    	{
+					"CidrIp" : "193.240.158.22/32",
+					"Description" : "White listing traffic from London Office",
+					"FromPort" : "80",
+					"IpProtocol" : "HTTP",
+					"ToPort" : "80"
+					}
+			    ],
+			    "Tags" :  [],
+			    "VpcId" : {"Ref" : "VpcId"}
+  			}
+        },
+        "ELB" : {
+        	"Type" : "AWS::ElasticLoadBalancingV2::LoadBalancer",
+			"Properties" : {    
+			    "Name" : {"Ref" : "AWS::StackName"},
+			    "Scheme" : "internet-facing",
+			    "SecurityGroups" : [{"Ref" : "ELBSecurityGroup"}],
+			    "Subnets" : [
+			    	{"Ref" : "SubnetA"},
+			    	{"Ref" : "SubnetB"}
+			    ],
+			    "Tags" : [],
+			    "Type" : "application",
+			    "IpAddressType" : "ipv4"
+			}
+        },
+        "ELBTargetGroup" :{
+			"Type" : "AWS::ElasticLoadBalancingV2::TargetGroup",
+			"Properties" : {
+			    "HealthCheckIntervalSeconds" : "30",
+			    "HealthCheckPath" : "/",
+			    "HealthCheckPort" : "80",
+			    "HealthCheckProtocol" : "HTTP",
+			    "HealthCheckTimeoutSeconds" : "5",
+			    "HealthyThresholdCount" : "5",
+			    "Name" : {"Ref" : "AWS::StackName"},
+			    "Port" : "80",
+			    "Protocol" : "HTTP",
+			    "Tags" : [],
+			    "Targets" : [
+			    	{
+  					"AvailabilityZone" : "",
+  					"Id" : "",
+  					"Port" : "80"
+  					}
+			    ],
+			    "TargetType" : "instance",
+			    "UnhealthyThresholdCount" : "5",
+			    "VpcId" : {"Ref" : "VpcId"}
+			}
+  		},
+  		"ELBListener" : {
+	  		"Type" : "AWS::ElasticLoadBalancingV2::Listener",
+			"Properties" : {
+			    "Certificates" : [],
+			    "DefaultActions" : [
+			    	{
+  					"TargetGroupArn" : {"Ref" : "ELBTargetGroup"},
+  					"Type" : "forward"
+					}
+			    ],
+			    "LoadBalancerArn" : {"Ref" : "ELB"},
+			    "Port" : "80",
+			    "Protocol" : "HTTP"
+			  }
+		},
+  		"ClusterSecurityGroup" : {
+  			"Type" : "AWS::EC2::SecurityGroup",
+  			"Properties" : {
+     			"GroupName" : ,
+			    "GroupDescription" : "This security group allows ingress traffic from the ELB to the ECS Cluster instances",
+			    "SecurityGroupIngress" : [
+			    	{
+  					"Description" : "This security groups allows ingress traffic from the Cluster ELB to the cluster instance's on port 80",
+  					"FromPort" : "80",
+  					"IpProtocol" : "HTTP",
+  					"SourceSecurityGroupId" : ,
+  					"ToPort" : "80"
+					}
+			    ],
+			    "Tags" :  [],
+			    "VpcId" : {"Ref" : "VpcId"}
+  			}
+  		},
+        "AutoscalingGroup" : {
+        	"Type" : "AWS::AutoScaling::AutoScalingGroup",
+		   	"Properties" : {
+			    "AutoScalingGroupName" : {"Ref" : "AWS::StackName"},
+			    "Cooldown" : "300",
+			    "DesiredCapacity" : "1",
+			    "HealthCheckGracePeriod" : "120",
+			    "HealthCheckType" : "EC2",
+			    "LaunchConfigurationName" : {"Ref" : "LaunchConfig"},
+			    "LoadBalancerNames" : [{"Ref" : "ELB"}],
+			    "MaxSize" : "1",
+			    "MinSize" : "1",
+			    "NotificationConfigurations" : [],
+			    "ServiceLinkedRoleARN" : "",
+			    "Tags" : [],
+			    "VPCZoneIdentifier" : [
+			    	{"Ref" : "SubnetA"},
+			    	{"Ref" : "SubnetB"}
+			    ]
+			}
+        },
+        "ECSRole" : {
+        	"Type" : "AWS::IAM::Role",
+        	"Properties" : {
+        	}
+        },
+        "IamInstanceProfile" : {
+        	"Type" : "AWS::",
+        	"Properties" : {
+        		"Path" : "/",
+        		"Roles" : {"Ref" : "ECSRole"}
+        	}
+        },
+        "LaunchConfig" : {
+        	"Type" : "AWS::AutoScaling::LaunchConfiguration",
+   			"Properties" : {
+      			"AssociatePublicIpAddress" : "true",
+      			"ClassicLinkVPCId" : {"Ref" : "VpcId"},
+      			"ClassicLinkVPCSecurityGroups" : [
+      				{"Ref" : "ClusterSecurityGroup"}
+				],
+      			"EbsOptimized" : "true",
+      			"IamInstanceProfile" : {"Ref" : "IamInstanceProfile"},
+      			"ImageId" : {
+          			"Fn::FindInMap":[
+            		"AWSRegionToAMI",
+            		{
+              			"Ref":"AWS::Region"
+            		},
+            		"AMIID"
+          			]
+        		},
+      			"InstanceMonitoring" : "false",
+      			"InstanceType" : {"Ref" : "InstanceType"},
+      			"KeyName" : {"Ref" : "KeyPair"},
+      			"LaunchConfigurationName" : {"Ref" : "AWS::StackName"},
+      			"SecurityGroups" : [
+      				{"Ref" : "ClusterSecurityGroup"}
+      			],
+      			"SpotPrice" : "",
+      			"UserData" : {
+          			"Fn::Base64":{
+            			"Fn::Join":[
+              				"",
+              				[
+                			"#!/bin/bash -xe\n",
+                			"echo ECS_CLUSTER=",
+                			{
+                  				"Ref":"ECSCluster"
+                			},
+                			" >> /etc/ecs/ecs.config\n",
+                			"yum install -y aws-cfn-bootstrap\n",
+                			"/opt/aws/bin/cfn-signal -e $? ",
+                			"         --stack ",
+                			{
+                  				"Ref":"AWS::StackName"
+                			},
+                				"         --resource AutoScalingGroup ",
+                				"         --region ",
+                			{
+                  				"Ref":"AWS::Region"
+                			},
+                			"\n"
+             				]
+            			]
+          			}
+        		}
+   			}
+        },
+        "TaskDefinition" : {
+        	"Type" : "AWS::ECS::TaskDefinition",
+		  	"Properties" : {
+			    "Volumes" : [],
+			    "Cpu" : ""4096,
+			    "Family" : {"Ref" : "AWS::StackName"},
+			    "Memory" : "4096",
+			    "NetworkMode" : "bridge",
+			    "ContainerDefinitions" : [
+			    	{
+						"Command" : [],
+						"Cpu" : ,
+						"DisableNetworking" : ,
+						"DnsSearchDomains" : [],
+						"DnsServers" : [],
+						"DockerLabels" : {},
+						"DockerSecurityOptions" : [],
+						"EntryPoint" : [],
+						"Environment" : [],
+						"Essential" : "",
+						"ExtraHosts" : [],
+						"HealthCheck" : "",
+						"Hostname" : "",
+						"Image" : "",
+						"Links" : [  ],
+						"LinuxParameters" : "",
+						"LogConfiguration" : "",
+						"Memory" : "",
+						"MemoryReservation" : "",
+						"MountPoints" : [ ],
+						"Name" : ,
+						"PortMappings" : [],
+						"Privileged" : "",
+						"ReadonlyRootFilesystem" : "",
+						"Ulimits" : [],
+						"User" : "",
+						"VolumesFrom" : [],
+						"WorkingDirectory" : ""
+					}
+			    ]
+  			}
+        },
+        "ECSService" : {
+        	"Type" : "AWS::ECS::Service",
+			"Properties" : {
+			    "Cluster" : "",
+			    "DeploymentConfiguration" : "",
+			    "DesiredCount" : "",
+			    "HealthCheckGracePeriodSeconds" : "",
+			    "LaunchType" : "",
+			    "LoadBalancers" : [ ],
+			    "NetworkConfiguration" : "",
+			    "PlacementConstraints" : [ ],
+			    "Role" : "",
+			    "PlacementStrategies" : [ ],
+			    "PlatformVersion" : "",
+			    "ServiceName" : "",
+			    "ServiceRegistries" : [ ],
+			    "TaskDefinition" : ""
+			}
+        }
+    },
+    "Outputs" : {
+
+    }
+}

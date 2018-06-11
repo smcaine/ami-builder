@@ -1,0 +1,233 @@
+{
+    "AWSTemplateFormatVersion": "2010-09-09",
+    "Description": "This template is used to create an Ansible/Packer AMI Builder using CodePipeline/CodeBuild which webhooks to Github repository",
+    "Parameters": {
+        "GitHubToken": {
+            "NoEcho": "true",
+            "Description": "Personal access token, needed for GitHub Enterprise and GitLab",
+            "Type": "String",
+            "Default": "",
+            "ConstraintDescription": "this token must be generated from the git server/provider"
+        },
+        "GitHubOwner": {
+            "Type" : "String",
+            "Default" : "tradedoubler"
+        },
+        "GitHubRepo" : {
+            "Type" : "String",
+            "Default" : "DCSO"
+        },
+        "GitHubBranch" : {
+            "Type" : "String",
+            "Default" : "master"
+        },
+        "PathToBuildSpec" : {
+            "Type" : "String",
+            "Default" : "CodeBuild/zabbix-base-test/BuildSpec.yaml"
+        },
+        "BuildProject" : {
+            "Type" : "String",
+            "Default" : ""
+        },
+        "BucketName" : {
+            "Type" : "String",
+            "Default" : ""
+        }
+    },
+    "Resources" : {
+        "CodePipelineServiceRole" : {
+            "Type" : "AWS::IAM::Role",
+            "Properties" : {
+                "Path" : "/",
+                "AssumeRolePolicyDocument":{
+                    "Version" : "2012-10-17",
+                    "Statement": [ {
+                        "Effect": "Allow",
+                        "Principal": {
+                            "Service": [ "codepipeline.amazonaws.com" ]
+                            },
+                        "Action": [ "sts:AssumeRole" ]
+                    }]
+                },
+                "Policies": [{
+                    "PolicyName": {"Ref" : "BuildProject"},
+                    "PolicyDocument": {
+                          "Version": "2012-10-17",
+                          "Statement": [
+                                {
+                                "Effect": "Allow",
+                                "Action": "*",
+                                "Resource": { "Fn::Join" : [ "",[
+                                    "arn:aws:codebuild:",
+                                    {"Ref": "AWS::Region"},
+                                    ":",
+                                    {"Ref" : "AWS::AccountId"},
+                                    ":project/",
+                                    {"Ref" : "BuildProject"}
+                                    ]]}
+                                },
+                                {
+                                "Effect": "Allow",
+                                "Action": "*",
+                                "Resource": { "Fn::Join" : [ "",[
+                                    "arn:aws:s3:::",
+                                    {"Ref" : "BucketName"},
+                                    "/*"
+                                    ]]}
+                                }                             
+                            ]
+                    }
+               }]
+            }
+        },
+        "ArtifactsBucket" : {
+            "Type" : "AWS::S3::Bucket",
+            "Properties" : {
+                "BucketName" : {"Ref" : "BucketName"},
+                "Tags" : [],
+                "VersioningConfiguration" : {
+                    "Status" : "Enabled"
+                }
+            }
+        },
+        "CodePipeline" : {
+            "Type" : "AWS::CodePipeline::Pipeline",
+            "Properties" : {
+                "ArtifactStore" : {
+                    "Location" : {"Ref" : "ArtifactsBucket"},
+                    "Type" : "S3"
+                    },
+                "RoleArn": {"Fn::GetAtt" : ["CodePipelineServiceRole", "Arn"]},
+                "Name" : {"Ref" : "BuildProject"},
+                "Stages" : [
+                    {
+                        "Actions" : [{
+                            "ActionTypeId" : {
+                                "Category": "Source",
+                                "Owner": "ThirdParty",
+                                "Version": "1",
+                                "Provider": "GitHub"
+                                },
+                            "Configuration" : {
+                                "Owner" : {"Ref" : "GitHubOwner"},
+                                "Repo" : {"Ref" : "GitHubRepo"},
+                                "Branch" : {"Ref" : "GitHubBranch"},
+                                "OAuthToken" : {"Ref" : "GitHubToken"}
+                            },
+                            "InputArtifacts" : [],
+                            "Name" : "Source",
+                            "OutputArtifacts" : [{
+                                "Name" : {"Ref" : "AWS::StackName"}
+                            }],
+                            "RunOrder" : 1
+                            }
+                        ],
+                        "Name" : "Source"
+                    },
+                    {
+                        "Actions" : [{
+                            "ActionTypeId" : {
+                                "Category": "Build",
+                                "Owner": "AWS",
+                                "Version": "1",
+                                "Provider": "CodeBuild"
+                                },
+                            "Configuration" : {
+                                "ProjectName" : {"Ref" : "BuildProject"}
+                            },
+                            "InputArtifacts" : [{
+                                "Name" : {"Ref" : "AWS::StackName"}
+                                }],
+                            "Name" : "Build",
+                            "OutputArtifacts" : [],
+                            "RunOrder" : 1
+                            }
+                        ],
+                        "Name" : "Build"
+                    }
+                ]
+                }
+            },
+        "CodeBuildRole": {
+          "Type": "AWS::IAM::Role",
+          "Properties": {
+            "AssumeRolePolicyDocument": {
+              "Statement": [
+                {
+                  "Action": [
+                    "sts:AssumeRole"
+                  ],
+                  "Effect": "Allow",
+                  "Principal": {
+                    "Service": [
+                      "codebuild.amazonaws.com"
+                    ]
+                  }
+                }
+              ],
+              "Version": "2012-10-17"
+            },
+            "Path": "/",
+            "Policies": [
+              {
+                "PolicyName": "CodeBuildAccess",
+                "PolicyDocument": {
+                  "Version": "2012-10-17",
+                  "Statement": [
+                    {
+                      "Action": [
+                        "logs:*",
+                        "ec2:*"
+                      ],
+                      "Effect": "Allow",
+                      "Resource": "*"
+                    },
+                    {
+                        "Action" : [
+                            "*"
+                        ],
+                        "Effect" : "Allow",
+                        "Resource" : { "Fn::Join" : [ "",[
+                        "arn:aws:s3:::",
+                        {"Ref" : "BucketName"},
+                        "/*"
+                    ]]}
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        "CodeBuild" : {
+            "Type" : "AWS::CodeBuild::Project",
+            "Properties" : {
+                "Artifacts" : {
+                    "Name" : {"Ref" : "BuildProject"},
+                    "Type" : "CODEPIPELINE"
+                    },
+                "Description" : "This CodeBuild is used to run Packer to build and conifigure a TD base AMI",
+                "Environment" : {
+                    "ComputeType" : "BUILD_GENERAL1_SMALL",
+                    "Image" : "aws/codebuild/ubuntu-base:14.04",
+                    "PrivilegedMode" : false,
+                    "Type" : "LINUX_CONTAINER"
+                    },
+                "Name" : {"Ref" : "BuildProject"},
+                "ServiceRole" : { "Ref" :"CodeBuildRole" },
+                "Source" : {
+                    "BuildSpec" : {"Ref" : "PathToBuildSpec"} ,
+                    "Type" : "CODEPIPELINE"
+                    },
+                "Tags" : [
+                    {
+                    "Key" : "Name",
+                    "Value" : {"Ref" : "BuildProject"}
+                    }]
+            }
+        }
+    },
+    "Outputs" : {
+    } 
+}
+
